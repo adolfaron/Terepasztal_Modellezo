@@ -1,0 +1,527 @@
+
+using Godot;
+using System.Collections.Generic;
+
+public partial class Main : Node3D
+{
+	private Camera3D camera;
+
+	private MeshInstance3D sinVas;
+	private MeshInstance3D sinTalpfa;
+	private MeshInstance3D sinVonalak;
+
+	private Label kiir;
+
+	// 0: kezdőpont
+	// 1: kezdőirány segédpontja
+	// 2: végpont
+	// 3: végirány segédpontja
+	private readonly Vector3[] gorbe = new Vector3[4];
+	private readonly MeshInstance3D[] segedPont =
+		new MeshInstance3D[4];
+
+	private int kattAllapot = 0;
+	private Vector3 elonezetPozicio;
+
+	// Sínméretek
+	private const float Nyomtav = 1.0f;
+	private const float SinSzelessege = 0.12f;
+	private const float SinMagassaga = 0.14f;
+	private const float TalpfaTav = 0.45f;
+	private const float TalpfaHosz = 0.22f;
+	private const float TalpfaMagassag = 0.12f;
+	private const float SinMagassagaTalajtol = 0.20f;
+
+	private StandardMaterial3D sinAnyag;
+	private StandardMaterial3D talpfaAnyag;
+	private StandardMaterial3D segedVonalAnyag;
+
+	private BoxMesh railBox;
+	private BoxMesh sleeperBox;
+
+	public override void _Ready()
+	{
+		// Kamera
+		camera = new Camera3D();
+		AddChild(camera);
+
+		camera.Position = new Vector3(12, 14, 16);
+		camera.LookAt(new Vector3(5, 0, 5), Vector3.Up);
+		camera.Current = true;
+
+		// Fény
+		var feny = new DirectionalLight3D();
+		AddChild(feny);
+
+		feny.RotationDegrees = new Vector3(-50, -30, 0);
+
+		// Talaj
+		var talaj = new MeshInstance3D();
+		talaj.Mesh = new PlaneMesh
+		{
+			Size = new Vector2(100, 100)
+		};
+
+		var talajAnyag = new StandardMaterial3D();
+		talajAnyag.AlbedoColor =
+			new Color(0.20f, 0.23f, 0.20f);
+
+		talaj.MaterialOverride = talajAnyag;
+		talaj.Position = new Vector3(0, -0.05f, 0);
+		AddChild(talaj);
+
+		// Fém sínszálak anyaga
+		sinAnyag = new StandardMaterial3D();
+		sinAnyag.AlbedoColor =
+			new Color(0.65f, 0.68f, 0.72f);
+		sinAnyag.Metallic = 0.75f;
+		sinAnyag.Roughness = 0.30f;
+
+		// Keresztaljak anyaga
+		talpfaAnyag = new StandardMaterial3D();
+		talpfaAnyag.AlbedoColor =
+			new Color(0.30f, 0.17f, 0.08f);
+		talpfaAnyag.Roughness = 0.9f;
+
+		// Segédvonalak anyaga
+		segedVonalAnyag = new StandardMaterial3D();
+		segedVonalAnyag.ShadingMode =
+			BaseMaterial3D.ShadingModeEnum.Unshaded;
+		segedVonalAnyag.AlbedoColor = Colors.Cyan;
+
+		// Egy egység hosszú sínmodell.
+		// A transzformációval a megfelelő hosszra nyújtjuk.
+		railBox = new BoxMesh
+		{
+			Size = new Vector3(
+				SinSzelessege,
+				SinMagassaga,
+				1.0f
+			)
+		};
+
+		// Keresztalj
+		sleeperBox = new BoxMesh
+		{
+			Size = new Vector3(
+				Nyomtav + 0.35f,
+				TalpfaMagassag,
+				TalpfaHosz
+			)
+		};
+
+		// Generált sín
+		sinVas = new MeshInstance3D();
+		sinVas.MaterialOverride = sinAnyag;
+		AddChild(sinVas);
+
+		// Generált keresztaljak
+		sinTalpfa = new MeshInstance3D();
+		sinTalpfa.MaterialOverride = talpfaAnyag;
+		AddChild(sinTalpfa);
+
+		// Segédvonalak
+		sinVonalak = new MeshInstance3D();
+		sinVonalak.MaterialOverride = segedVonalAnyag;
+		AddChild(sinVonalak);
+
+		// Pontjelölők
+		for (int i = 0; i < segedPont.Length; i++)
+		{
+			segedPont[i] = new MeshInstance3D();
+
+			segedPont[i].Mesh = new SphereMesh
+			{
+				Radius = 0.18f,
+				Height = 0.36f
+			};
+
+			var material = new StandardMaterial3D();
+
+			material.AlbedoColor = i switch
+			{
+				0 => Colors.LimeGreen,
+				1 => Colors.Cyan,
+				2 => Colors.Orange,
+				_ => Colors.Cyan
+			};
+
+			segedPont[i].MaterialOverride = material;
+			segedPont[i].Visible = false;
+
+			AddChild(segedPont[i]);
+		}
+
+		// Képernyőn megjelenő útmutató
+		var ui = new CanvasLayer();
+		AddChild(ui);
+
+		kiir = new Label();
+		kiir.Position = new Vector2(20, 20);
+		kiir.AddThemeFontSizeOverride("font_size", 22);
+		ui.AddChild(kiir);
+
+		UpdateInstructions();
+	}
+
+	public override void _Input(InputEvent @event)
+	{
+		// Egérmozgatás: folyamatos előnézet
+		if (@event is InputEventMouseMotion)
+		{
+			if (kattAllapot > 0 && kattAllapot < 4)
+			{
+				if (GetMousePositionOnGround(
+					out Vector3 position))
+				{
+					elonezetPozicio = position;
+
+					UpdatePreviewMarker();
+					UpdateVisuals();
+				}
+			}
+		}
+
+		// Bal kattintás: pont rögzítése
+		if (@event is InputEventMouseButton mouse
+			&& mouse.ButtonIndex == MouseButton.Left
+			&& mouse.Pressed)
+		{
+			if (kattAllapot >= 4)
+				return;
+
+			if (GetMousePositionOnGround(
+				out Vector3 position))
+			{
+				gorbe[kattAllapot] = position;
+
+				segedPont[kattAllapot].Position =
+					position + Vector3.Up * 0.15f;
+
+				segedPont[kattAllapot].Visible = true;
+
+				
+if (@event is InputEventMouseButton leftClick &&
+	leftClick.ButtonIndex == MouseButton.Left && leftClick.Pressed)
+{
+	if (GetMousePositionOnGround(out Vector3 clickPosition))
+	{
+		// Ha az előző ív elkészült, új ív kezdődik.
+		if (kattAllapot >= 4)
+		{
+			kattAllapot = 0;
+		}
+
+		gorbe[kattAllapot] = position;
+		segedPont[kattAllapot].Position = position + Vector3.Up * 0.15f;
+		segedPont[kattAllapot].Visible = true;
+
+		kattAllapot++;
+
+		if (kattAllapot == 4)
+		{
+			completedCurves.Add(new TrackCurve
+			{
+				P0 = gorbe[0],
+				P1 = gorbe[1],
+				P2 = gorbe[2],
+				P3 = gorbe[3]
+			});
+
+			GD.Print($"Elkészült ívek száma: {completedCurves.Count}");
+		}
+
+		UpdatePreviewMarker();
+		UpdateVisuals();
+		UpdateInstructions();
+	}
+}
+
+			}
+		}
+
+		// Jobb kattintás: újrakezdés
+		if (@event is InputEventMouseButton right
+			&& right.ButtonIndex == MouseButton.Right
+			&& right.Pressed)
+		{
+			ResetTrack();
+		}
+	}
+
+	private bool GetMousePositionOnGround(
+		out Vector3 position)
+	{
+		Vector2 mousePosition =
+			GetViewport().GetMousePosition();
+
+		Vector3 origin =
+			camera.ProjectRayOrigin(mousePosition);
+
+		Vector3 direction =
+			camera.ProjectRayNormal(mousePosition);
+
+		if (Mathf.Abs(direction.Y) < 0.001f)
+		{
+			position = Vector3.Zero;
+			return false;
+		}
+
+		float distance = -origin.Y / direction.Y;
+
+		if (distance < 0)
+		{
+			position = Vector3.Zero;
+			return false;
+		}
+
+		position = origin + direction * distance;
+		position.Y = 0;
+
+		return true;
+	}
+
+	private void UpdatePreviewMarker()
+	{
+		if (kattAllapot > 0 && kattAllapot < 4)
+		{
+			int index = kattAllapot;
+
+			segedPont[index].Position =
+				elonezetPozicio + Vector3.Up * 0.15f;
+
+			segedPont[index].Visible = true;
+		}
+	}
+
+	private void UpdateVisuals()
+	{
+		// Az aktuális Bézier-kontrollpontok
+		Vector3 p0;
+		Vector3 p1;
+		Vector3 p2;
+		Vector3 p3;
+
+		if (kattAllapot == 0)
+		{
+			sinVas.Mesh = null;
+			sinTalpfa.Mesh = null;
+			sinVonalak.Mesh = null;
+			return;
+		}
+
+		p0 = gorbe[0];
+
+		if (kattAllapot == 1)
+		{
+			p1 = elonezetPozicio;
+			p2 = elonezetPozicio;
+			p3 = elonezetPozicio;
+		}
+		else if (kattAllapot == 2)
+		{
+			p1 = gorbe[1];
+			p2 = elonezetPozicio;
+			p3 = elonezetPozicio;
+		}
+		else if (kattAllapot == 3)
+		{
+			p1 = gorbe[1];
+			p2 = elonezetPozicio;
+			p3 = gorbe[2];
+		}
+		else
+		{
+			p1 = gorbe[1];
+			p2 = gorbe[3];
+			p3 = gorbe[2];
+		}
+
+		// A görbe mintavételezése
+		var curvegorbe = new List<Vector3>();
+
+		const int segments = 100;
+
+		for (int i = 0; i <= segments; i++)
+		{
+			float t = (float)i / segments;
+			float u = 1.0f - t;
+
+			Vector3 point =
+				u * u * u * p0 +
+				3.0f * u * u * t * p1 +
+				3.0f * u * t * t * p2 +
+				t * t * t * p3;
+
+			curvegorbe.Add(point);
+		}
+
+		// Két sínszál
+		var rails = new SurfaceTool();
+		rails.Begin(Mesh.PrimitiveType.Triangles);
+
+		// Keresztaljak
+		var sleepers = new SurfaceTool();
+		sleepers.Begin(Mesh.PrimitiveType.Triangles);
+
+		float distanceSinceSleeper = TalpfaTav;
+
+		for (int i = 0; i < curvegorbe.Count - 1; i++)
+		{
+			Vector3 a = curvegorbe[i];
+			Vector3 b = curvegorbe[i + 1];
+
+			Vector3 difference = b - a;
+			float length = difference.Length();
+
+			if (length < 0.0001f)
+				continue;
+
+			Vector3 tangent = difference.Normalized();
+
+			// A sínre merőleges vízszintes irány
+			Vector3 side =
+				Vector3.Up.Cross(tangent).Normalized();
+
+			if (side.LengthSquared() < 0.001f)
+				continue;
+
+			// A két sínszál középpontja
+			Vector3 center =
+				(a + b) * 0.5f +
+				Vector3.Up * SinMagassagaTalajtol;
+
+			Vector3 leftRail =
+				center - side * (Nyomtav * 0.5f);
+
+			Vector3 rightRail =
+				center + side * (Nyomtav * 0.5f);
+
+			// A BoxMesh helyi Z tengelye a sín irányába mutat.
+			// Kicsit átfednek a szakaszok, hogy ne legyen rés.
+			float railLength = length * 1.04f;
+
+			var leftBasis = new Basis(
+				side,
+				Vector3.Up,
+				tangent * railLength
+			);
+
+			var rightBasis = new Basis(
+				side,
+				Vector3.Up,
+				tangent * railLength
+			);
+
+			rails.AppendFrom(
+				railBox,
+				0,
+				new Transform3D(leftBasis, leftRail)
+			);
+
+			rails.AppendFrom(
+				railBox,
+				0,
+				new Transform3D(rightBasis, rightRail)
+			);
+
+			// Keresztaljak egyenletes távolságra
+			distanceSinceSleeper += length;
+
+			if (distanceSinceSleeper >= TalpfaTav)
+			{
+				distanceSinceSleeper = 0;
+
+				Vector3 sleeperCenter =
+					center -
+					Vector3.Up *
+					(SinMagassagaTalajtol - TalpfaMagassag * 0.5f);
+
+				var sleeperBasis = new Basis(
+					side,
+					Vector3.Up,
+					tangent
+				);
+
+				sleepers.AppendFrom(
+					sleeperBox,
+					0,
+					new Transform3D(
+						sleeperBasis,
+						sleeperCenter
+					)
+				);
+			}
+		}
+
+		sinVas.Mesh = rails.Commit();
+		sinTalpfa.Mesh = sleepers.Commit();
+
+		// Segédvonalak megjelenítése
+		var handles = new SurfaceTool();
+		handles.Begin(Mesh.PrimitiveType.Lines);
+
+		if (kattAllapot >= 2)
+		{
+			handles.AddVertex(gorbe[0]);
+			handles.AddVertex(gorbe[1]);
+		}
+		else if (kattAllapot == 1)
+		{
+			handles.AddVertex(gorbe[0]);
+			handles.AddVertex(elonezetPozicio);
+		}
+
+		if (kattAllapot >= 4)
+		{
+			handles.AddVertex(gorbe[2]);
+			handles.AddVertex(gorbe[3]);
+		}
+		else if (kattAllapot == 3)
+		{
+			handles.AddVertex(gorbe[2]);
+			handles.AddVertex(elonezetPozicio);
+		}
+
+		sinVonalak.Mesh = handles.Commit();
+	}
+
+	private void UpdateInstructions()
+	{
+		kiir.Text = kattAllapot switch
+		{
+			0 => "1/4 - Kattints a kezdopontra!",
+			1 => "2/4 - Mozgasd az egeret a kezdoiranyhoz!",
+			2 => "3/4 - Mozgasd az egeret a vegponthoz!",
+			3 => "4/4 - Mozgasd az egeret a vegiranyhoz!",
+			_ => "Sín kész! Jobb kattintas: ujrakezdes."
+		};
+	}
+
+	private void ResetTrack()
+	{
+		kattAllapot = 0;
+
+	foreach (var marker in segedPont)
+		{
+			marker.Visible = false;
+		}
+
+		sinVas.Mesh = null;
+		sinTalpfa.Mesh = null;
+		sinVonalak.Mesh = null;
+
+		UpdateInstructions();
+	}
+	
+	private class TrackCurve
+	{
+		public Vector3 P0;
+		public Vector3 P1;
+		public Vector3 P2;
+		public Vector3 P3;
+	}
+
+	private readonly List<TrackCurve> completedCurves = new();
+
+	}

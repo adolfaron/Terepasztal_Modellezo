@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "Vonat": {
+      "commandName": "Project"
+    },
+    "Godot profil": {
+      "commandName": "Executable",
+      "executablePath": "C:\\Users\\Admin\\Documents\\Áron\\Telepítők\\Godot_v4.5.1-stable_mono_win64\\Godot_v4.5.1-stable_mono_win64.exe",
+      "commandLineArgs": "--path \"C:\\Users\\Admin\\Documents\\Áron\\programok\\Godot\\vonat\" --verbose",
+      "workingDirectory": "C:\\Users\\Admin\\Documents\\Áron\\programok\\Godot\\vonat"
+    }
+  }
+}
